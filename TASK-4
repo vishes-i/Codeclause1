@@ -1,0 +1,523 @@
+import javax.swing.*;
+import java.awt.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+
+public class LogReaderGUI extends JFrame {
+
+    private JTextArea logArea;
+    private JButton clientLogsButton;
+    private JButton serverLogsButton;
+
+    public LogReaderGUI() {
+        super("Log Reader");
+
+        // Layout
+        setLayout(new BorderLayout());
+
+        // Log Area
+        logArea = new JTextArea();
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+
+        JScrollPane scrollPane = new JScrollPane(logArea);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+
+        add(scrollPane, BorderLayout.CENTER);
+
+        // Buttons
+        clientLogsButton = new JButton("Client Logs");
+        serverLogsButton = new JButton("Server Logs");
+
+        clientLogsButton.addActionListener(e -> fetchClientLogsAndDisplay());
+        serverLogsButton.addActionListener(e -> fetchServerLogsAndDisplay());
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        buttonPanel.add(clientLogsButton);
+        buttonPanel.add(serverLogsButton);
+
+        add(buttonPanel, BorderLayout.SOUTH);
+
+        // Frame Settings
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(500, 400);
+        setLocationRelativeTo(null);
+        setVisible(true);
+
+        // Initially fetch client logs
+        fetchClientLogsAndDisplay();
+    }
+
+    private void fetchClientLogsAndDisplay() {
+        fetchLogsAndDisplay("client_logs.db", "client_logs");
+    }
+
+    private void fetchServerLogsAndDisplay() {
+        fetchLogsAndDisplay("server_logs.db", "server_logs");
+    }
+
+    private void fetchLogsAndDisplay(String fileName, String tableName) {
+        logArea.setText(""); // Clear existing logs
+
+        try {
+            // Load SQLite JDBC driver
+            Class.forName("org.sqlite.JDBC");
+
+            // Construct the absolute path to the database file
+            String dbUrl = "jdbc:sqlite:" + fileName;
+
+            // Connect to the SQLite database
+            Connection connection = DriverManager.getConnection(dbUrl);
+
+            // Query to retrieve logs
+            String query = "SELECT * FROM " + tableName;
+
+            // Prepare the statement
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+
+            // Execute the query
+            ResultSet resultSet = preparedStatement.executeQuery();
+
+            // Display logs in the GUI
+            while (resultSet.next()) {
+                String logMessage = resultSet.getString("log_message");
+                String timestamp = resultSet.getString("timestamp");
+                logArea.append("[" + timestamp + "] " + logMessage + "\n");
+            }
+
+            // Close the resources
+            resultSet.close();
+            preparedStatement.close();
+            connection.close();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+
+
+
+
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            new LogReaderGUI();
+     });
+}
+}
+-------------------------------------------------------------------------------------
+import javax.swing.*;
+import java.awt.*;
+import java.io.*;
+import java.net.Socket;
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.time.LocalTime;
+
+
+import java.io.*;
+
+
+public class VPNClientGUI extends JFrame {
+    private static final String SERVER_ADDRESS = "127.0.0.1";
+    private static final int SERVER_PORT = 8888;
+    private static final String DATABASE_URL = "jdbc:sqlite:client_logs.db";
+    private Connection connection;
+
+    private final JTextArea logArea;
+
+    public VPNClientGUI() {
+        super("VPN Client");
+
+        // Initialize the database connection
+        try {
+            connection = DriverManager.getConnection(DATABASE_URL);
+            initializeDatabase();
+        } catch (SQLException e) {
+            logError("Error connecting to the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        // Layout
+        setLayout(new BorderLayout());
+
+        // Log Area
+        logArea = new JTextArea();
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+
+        JScrollPane scrollPane = new JScrollPane(logArea);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+
+        add(scrollPane, BorderLayout.CENTER);
+
+        // Connect Button
+        JButton connectButton = new JButton("Connect to Server");
+        connectButton.addActionListener(e -> connectToServer());
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        buttonPanel.add(connectButton);
+
+        add(buttonPanel, BorderLayout.SOUTH);
+
+        // Frame Settings
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(500, 400);
+        setLocationRelativeTo(null);
+        setResizable(false);
+        setVisible(true);
+    }
+
+    private void initializeDatabase() {
+        String createTableQuery = "CREATE TABLE IF NOT EXISTS client_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, log_message TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
+        try (PreparedStatement preparedStatement = connection.prepareStatement(createTableQuery)) {
+            preparedStatement.executeUpdate();
+        } catch (SQLException e) {
+            logError("Error initializing the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+
+    private void insertLogMessage(String message) {
+        String insertLogQuery = "INSERT INTO client_logs (log_message, timestamp) VALUES (?, CURRENT_TIMESTAMP)";
+        try (PreparedStatement preparedStatement = connection.prepareStatement(insertLogQuery)) {
+            preparedStatement.setString(1, message);
+            preparedStatement.executeUpdate();
+        } catch (SQLException e) {
+            logError("Error inserting log message into the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void connectToServer() {
+        try {
+            log("Connecting to the server...");
+            Socket socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
+            log("Connected to the server.");
+
+            KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+            keyGen.init(128);
+            SecretKey secretKey = keyGen.generateKey();
+
+            log("Sending secret key to the server...");
+            ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+            outputStream.writeObject(secretKey);
+            log("Secret key sent to the server.");
+
+            log("Receiving encrypted data from the server...");
+            InputStream inputStream = socket.getInputStream();
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.DECRYPT_MODE, secretKey);
+            CipherInputStream cipherInputStream = new CipherInputStream(inputStream, cipher);
+
+            byte[] gifBytes = cipherInputStream.readAllBytes();
+            log("Received encrypted GIF data from the server.");
+
+            log("Decrypting data and displaying GIF...");
+            displayDecryptedGIF(gifBytes, secretKey);
+
+            cipherInputStream.close();
+            outputStream.close();
+            socket.close();
+        } catch (Exception e) {
+            logError("Error: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void displayDecryptedGIF(byte[] gifBytes, SecretKey secretKey) {
+        try {
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.DECRYPT_MODE, secretKey);
+            byte[] decryptedBytes = cipher.doFinal(gifBytes);
+
+            // Display the decrypted GIF
+            ImageIcon imageIcon = new ImageIcon(decryptedBytes);
+            JLabel gifLabel = new JLabel(imageIcon);
+
+            JFrame gifFrame = new JFrame("Decrypted GIF");
+            gifFrame.getContentPane().add(gifLabel, BorderLayout.CENTER);
+            gifFrame.setSize(400, 400);
+            gifFrame.setLocationRelativeTo(this);
+            gifFrame.setResizable(false);
+            gifFrame.setVisible(true);
+
+            log("GIF decrypted and displayed.");
+        } catch (Exception e) {
+            logError("Error decrypting GIF data: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private boolean insertIntoDatabase = true; // Flag to control recursive calls
+
+    private void insertLogIntoDatabase(String message) {
+        if (insertIntoDatabase) {
+            String insertLogQuery = "INSERT INTO client_logs (log_message, timestamp) VALUES (?, CURRENT_TIMESTAMP)";
+            try (PreparedStatement preparedStatement = connection.prepareStatement(insertLogQuery)) {
+                preparedStatement.setString(1, message);
+                preparedStatement.executeUpdate();
+            } catch (SQLException e) {
+                logError("Error inserting log message into the database: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+    }
+
+    // Modify the log and logError methods
+    private void log(String message) {
+        String logMessage = "[INFO][" + LocalTime.now() + "] " + message;
+        logArea.append(logMessage + "\n");
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+        insertLogIntoDatabase(logMessage);  // Insert log message into the database
+    }
+
+    private void logError(String message) {
+        String errorMessage = "[ERROR][" + LocalTime.now() + "] " + message;
+        logArea.append(errorMessage + "\n");
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+        insertIntoDatabase = false; // Disable database insertion to prevent recursion
+        insertLogIntoDatabase(errorMessage);
+        insertIntoDatabase = true; // Re-enable database insertion
+    }
+
+    private void insertLogIntoDatabaseWithoutError(String message) {
+        String insertLogQuery = "INSERT INTO client_logs (log_message, timestamp) VALUES (?, CURRENT_TIMESTAMP)";
+        try (PreparedStatement preparedStatement = connection.prepareStatement(insertLogQuery)) {
+            preparedStatement.setString(1, message);
+            preparedStatement.executeUpdate();
+        } catch (SQLException e) {
+            logError("Error inserting log message into the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        // Load the SQLite JDBC driver
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
+
+        SwingUtilities.invokeLater(VPNClientGUI::new);
+}
+}
+=-=---------------------------------------------------------
+import javax.crypto.Cipher;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.SecretKey;
+import javax.swing.*;
+import java.awt.*;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.OutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+
+public class VPNServer extends JFrame {
+    private static final int SERVER_PORT = 8888;
+    private static final String GIF_FILE_PATH = "happi.gif";
+    private static final String DATABASE_URL = "jdbc:sqlite:server_logs.db";
+    private Connection connection;
+
+    private JTextArea logArea;
+    private JButton startButton;
+    private JButton stopButton;
+    private ServerSocket serverSocket;
+    private ServerWorker serverWorker;
+
+    public VPNServer() {
+        super("VPN Server");
+
+        // Initialize the database connection
+        try {
+            connection = DriverManager.getConnection(DATABASE_URL);
+            initializeDatabase();
+        } catch (SQLException e) {
+            logError("Error connecting to the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        // Layout
+        setLayout(new BorderLayout());
+
+        // Log Area
+        logArea = new JTextArea();
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+
+        JScrollPane scrollPane = new JScrollPane(logArea);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+
+        add(scrollPane, BorderLayout.CENTER);
+
+        // Start and Stop Buttons
+        startButton = new JButton("Start Server");
+        startButton.addActionListener(e -> startServer());
+
+        stopButton = new JButton("Stop Server");
+        stopButton.addActionListener(e -> stopServer());
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        buttonPanel.add(startButton);
+        buttonPanel.add(stopButton);
+
+        add(buttonPanel, BorderLayout.SOUTH);
+
+        // Frame Settings
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(500, 400);
+        setLocationRelativeTo(null);
+        setVisible(true);
+    }
+
+    private void initializeDatabase() {
+        String createTableQuery = "CREATE TABLE IF NOT EXISTS server_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, log_message TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
+        try (PreparedStatement preparedStatement = connection.prepareStatement(createTableQuery)) {
+            preparedStatement.executeUpdate();
+        } catch (SQLException e) {
+            logError("Error initializing the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+
+
+    private void insertLogMessage(String message) {
+        String insertLogQuery = "INSERT INTO server_logs (log_message, timestamp) VALUES (?, CURRENT_TIMESTAMP)";
+        try (PreparedStatement preparedStatement = connection.prepareStatement(insertLogQuery)) {
+            preparedStatement.setString(1, message);
+            preparedStatement.executeUpdate();
+        } catch (SQLException e) {
+            // Log the error without calling insertLogMessage again
+            System.err.println("Error inserting log message into the database: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+
+
+    private void startServer() {
+        log("Starting VPN Server...");
+        startButton.setEnabled(false);
+        stopButton.setEnabled(true);
+
+        serverWorker = new ServerWorker();
+        serverWorker.execute();
+    }
+
+    private void stopServer() {
+        log("Stopping VPN Server...");
+        stopButton.setEnabled(false);
+        startButton.setEnabled(true);
+
+        if (serverWorker != null && !serverWorker.isDone()) {
+            serverWorker.cancel(true);
+        }
+
+        if (serverSocket != null && !serverSocket.isClosed()) {
+            try {
+                serverSocket.close();
+                log("VPN Server stopped.");
+            } catch (IOException e) {
+                logError("Error stopping server: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } else {
+            log("VPN Server is not running.");
+        }
+    }
+
+    private void encryptAndSendData(byte[] data, SecretKey secretKey, Socket socket) {
+        try {
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+            byte[] encryptedBytes = cipher.doFinal(data);
+
+            try (OutputStream outputStream = socket.getOutputStream();
+                 CipherOutputStream cipherOutputStream = new CipherOutputStream(outputStream, cipher)) {
+                cipherOutputStream.write(encryptedBytes);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Error encrypting and sending data", e);
+        }
+    }
+
+    private void log(String message) {
+        String logMessage = "[INFO][" + java.time.LocalTime.now() + "] " + message;
+        logArea.append(logMessage + "\n");
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+        insertLogMessage(logMessage);  // Insert log message into the database
+    }
+
+    private void logError(String message) {
+        String errorMessage = "[ERROR][" + java.time.LocalTime.now() + "] " + message;
+        logArea.append(errorMessage + "\n");
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+        insertLogMessage(errorMessage);  // Insert error message into the database
+    }
+
+    private class ServerWorker extends SwingWorker<Void, Void> {
+        @Override
+        protected Void doInBackground() throws Exception {
+            try {
+                serverSocket = new ServerSocket(SERVER_PORT);
+                log("VPN Server started on port " + SERVER_PORT);
+
+                while (!isCancelled()) {
+                    try (Socket socket = serverSocket.accept();
+                         ObjectInputStream inputStream = new ObjectInputStream(socket.getInputStream())) {
+
+                        log("Client connected: " + socket.getInetAddress().getHostAddress());
+                        SecretKey secretKey = (SecretKey) inputStream.readObject();
+
+                        byte[] gifBytes = Files.readAllBytes(Paths.get(GIF_FILE_PATH));
+                        encryptAndSendData(gifBytes, secretKey, socket);
+                    }
+                }
+            } catch (IOException | ClassNotFoundException e) {
+                if (!isCancelled()) {
+                    logError("Error: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+            return null;
+        }
+
+        @Override
+        protected void done() {
+            stopServer();
+        }
+    }
+
+    public static void main(String[] args) {
+        // Load the SQLite JDBC driver
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
+
+        SwingUtilities.invokeLater(VPNServer::new);
+}
+}
+
